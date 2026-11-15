@@ -1,0 +1,50 @@
+name: Daily Odoo + Tech Digest to iPhone
+
+on:
+  schedule:
+    # 10:00 UTC = 13:00 (1:00 PM) Asia/Qatar -> quick lunch check
+    - cron: "0 10 * * *"
+    # 18:00 UTC = 21:00 (9:00 PM) Asia/Qatar -> full evening digest
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Digest mode when run manually"
+        required: false
+        default: "full"
+        type: choice
+        options:
+          - quick
+          - full
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Determine digest mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ github.event.inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 10 * * *" ]; then
+            echo "value=quick" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=full" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run digest script
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DIGEST_MODE: ${{ steps.mode.outputs.value }}
+        run: python daily_digest.py
