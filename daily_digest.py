@@ -1,8 +1,9 @@
 """
 Fetches fresh Odoo-ecosystem news plus general tech/world headlines from free
-RSS/Atom feeds, picks the best few from each group, formats a short message
-(always including links), and pushes it to your iPhone as a free notification
-via ntfy.sh (https://ntfy.sh) - no account, no card, no phone-number linking.
+RSS/Atom feeds, picks the best few from each group, shortens every link,
+formats a clean Markdown message with quick-tap action buttons, and pushes it
+to your iPhone as a free notification via ntfy.sh (https://ntfy.sh) - no
+account, no card, no phone-number linking.
 
 Required environment variable (set as a GitHub Actions secret):
   NTFY_TOPIC   - your private topic name, e.g. yourname-odoo-digest-7f3k2
@@ -21,7 +22,7 @@ import feedparser
 import requests
 
 FEED_GROUPS = {
-    "\U0001F527 Odoo": [
+    "Odoo": [
         "https://github.com/odoo/odoo/releases.atom",
         "https://github.com/OCA/server-tools/releases.atom",
         "https://github.com/OCA/web/releases.atom",
@@ -29,7 +30,7 @@ FEED_GROUPS = {
         "https://github.com/OCA/purchase-workflow/releases.atom",
         "https://news.google.com/rss/search?q=Odoo&hl=en-US&gl=US&ceid=US:en",
     ],
-    "\U0001F310 Tech & World": [
+    "Tech & World": [
         "https://techcrunch.com/feed/",
         "https://www.theverge.com/rss/index.xml",
         "https://hnrss.org/frontpage",
@@ -41,6 +42,34 @@ MODE_SETTINGS = {
     "quick": {"max_per_group": 1, "label": "Quick Check"},
     "full": {"max_per_group": 3, "label": "Full Digest"},
 }
+
+MAX_TITLE_WORDS = 16
+MAX_ACTION_LABEL_CHARS = 28
+
+
+def shorten_url(long_url):
+    """Shorten a URL with TinyURL's free, keyless API. Falls back to the
+    original URL if the shortening request fails for any reason."""
+    try:
+        response = requests.get(
+            "https://tinyurl.com/api-create.php",
+            params={"url": long_url},
+            timeout=10,
+        )
+        response.raise_for_status()
+        short = response.text.strip()
+        if short.startswith("http"):
+            return short
+    except requests.RequestException:
+        pass
+    return long_url
+
+
+def clean_title(title, max_words=MAX_TITLE_WORDS):
+    words = title.split()
+    if len(words) > max_words:
+        title = " ".join(words[:max_words]) + "..."
+    return title
 
 
 def fetch_group_stories(feed_urls, max_items):
@@ -75,7 +104,7 @@ def fetch_group_stories(feed_urls, max_items):
     return stories[:max_items]
 
 
-def build_message(mode):
+def build_message_and_actions(mode):
     settings = MODE_SETTINGS.get(mode, MODE_SETTINGS["full"])
     max_per_group = settings["max_per_group"]
     label = settings["label"]
@@ -83,28 +112,52 @@ def build_message(mode):
     today_label = datetime.now().strftime("%A, %d %B")
     title = f"{label} - {today_label}"
     lines = []
+    actions = []
+    group_names = list(FEED_GROUPS.keys())
 
     any_stories = False
-    for group_name, feed_urls in FEED_GROUPS.items():
-        stories = fetch_group_stories(feed_urls, max_per_group)
-        lines.append(group_name)
+    for idx, group_name in enumerate(group_names):
+        stories = fetch_group_stories(FEED_GROUPS[group_name], max_per_group)
+        lines.append(f"**{group_name}**")
+
         if not stories:
-            lines.append("No fresh items right now.")
+            lines.append("_No fresh items right now._")
         else:
             any_stories = True
-            for idx, story in enumerate(stories, start=1):
-                # Title and link are always both included, even in quick mode.
-                lines.append(f"{idx}. {story['title']}")
-                lines.append(story["link"])
+            for story_idx, story in enumerate(stories):
+                short_link = shorten_url(story["link"])
+                clean = clean_title(story["title"])
+                lines.append(f"- [{clean}]({short_link})")
+
+                # Turn each section's top story into a quick-tap action
+                # button on the notification itself (max 3 total allowed).
+                if story_idx == 0 and len(actions) < 3:
+                    button_label = f"{group_name}: {clean_title(story['title'], max_words=5)}"
+                    if len(button_label) > MAX_ACTION_LABEL_CHARS:
+                        button_label = button_label[: MAX_ACTION_LABEL_CHARS - 1] + "…"
+                    actions.append(
+                        {
+                            "action": "view",
+                            "label": button_label,
+                            "url": short_link,
+                            "clear": False,
+                        }
+                    )
+
+        # Visual divider between sections (not after the last one).
+        if idx < len(group_names) - 1:
+            lines.append("")
+            lines.append("---")
         lines.append("")
 
     if not any_stories:
         lines.append("Nothing fresh across any feed right now.")
 
-    return title, "\n".join(lines).strip()
+    message = "\n".join(lines).strip()
+    return title, message, actions
 
 
-def send_notification(title, message):
+def send_notification(title, message, actions):
     topic = os.environ.get("NTFY_TOPIC")
 
     if not topic:
@@ -115,9 +168,12 @@ def send_notification(title, message):
         "topic": topic,
         "title": title,
         "message": message,
+        "markdown": True,
         "tags": ["newspaper"],
         "priority": 3,
     }
+    if actions:
+        payload["actions"] = actions
 
     response = requests.post("https://ntfy.sh/", json=payload, timeout=30)
     print(f"ntfy response ({response.status_code}): {response.text[:300]}")
@@ -126,12 +182,13 @@ def send_notification(title, message):
 
 def main():
     mode = os.environ.get("DIGEST_MODE", "full").strip().lower()
-    title, message = build_message(mode)
+    title, message, actions = build_message_and_actions(mode)
     print(f"---- Notification to send (mode={mode}) ----")
     print(f"Title: {title}")
     print(message)
+    print(f"Actions: {actions}")
     print("--------------------------")
-    send_notification(title, message)
+    send_notification(title, message, actions)
 
 
 if __name__ == "__main__":
