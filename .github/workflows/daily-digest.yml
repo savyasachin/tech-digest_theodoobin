@@ -17,6 +17,9 @@ on:
           - quick
           - full
 
+permissions:
+  contents: write   # needed so the workflow can commit docs/index.html back
+
 jobs:
   send-digest:
     runs-on: ubuntu-latest
@@ -43,8 +46,17 @@ jobs:
             echo "value=full" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run digest script
+      - name: Generate page and send teaser notification
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          PAGES_URL: ${{ secrets.PAGES_URL }}
           DIGEST_MODE: ${{ steps.mode.outputs.value }}
-        run: python daily_digest.py
+        run: python generate_digest.py
+
+      - name: Commit updated page
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --staged --quiet || git commit -m "Update daily digest page"
+          git push
