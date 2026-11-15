@@ -1,9 +1,14 @@
 """
 Fetches fresh Odoo-ecosystem news plus general tech/world headlines from free
-RSS/Atom feeds, picks the best few from each group, shortens every link,
+RSS/Atom feeds, picks the best few from each group, shortens long links,
 formats a clean Markdown message with quick-tap action buttons, and pushes it
 to your iPhone as a free notification via ntfy.sh (https://ntfy.sh) - no
 account, no card, no phone-number linking.
+
+Note: Markdown (bold, links) only renders once you open the message inside
+the ntfy app. The iOS lock-screen/notification-center preview always shows
+plain text for any app - that's an OS limitation, not something this script
+controls.
 
 Required environment variable (set as a GitHub Actions secret):
   NTFY_TOPIC   - your private topic name, e.g. yourname-odoo-digest-7f3k2
@@ -28,7 +33,8 @@ FEED_GROUPS = {
         "https://github.com/OCA/web/releases.atom",
         "https://github.com/OCA/account-invoicing/releases.atom",
         "https://github.com/OCA/purchase-workflow/releases.atom",
-        "https://news.google.com/rss/search?q=Odoo&hl=en-US&gl=US&ceid=US:en",
+        "https://hnrss.org/newest?q=Odoo",   # direct links, no redirect junk
+        "https://www.reddit.com/r/Odoo/.rss",  # direct links, no redirect junk
     ],
     "Tech & World": [
         "https://techcrunch.com/feed/",
@@ -45,11 +51,16 @@ MODE_SETTINGS = {
 
 MAX_TITLE_WORDS = 16
 MAX_ACTION_LABEL_CHARS = 28
+# TinyURL silently fails on very long URLs - skip shortening attempts past
+# this length rather than wasting a request that will just fall through.
+MAX_SHORTENABLE_LENGTH = 1800
 
 
 def shorten_url(long_url):
     """Shorten a URL with TinyURL's free, keyless API. Falls back to the
-    original URL if the shortening request fails for any reason."""
+    original URL if it's too long to shorten or the request fails."""
+    if len(long_url) > MAX_SHORTENABLE_LENGTH:
+        return long_url
     try:
         response = requests.get(
             "https://tinyurl.com/api-create.php",
@@ -58,7 +69,7 @@ def shorten_url(long_url):
         )
         response.raise_for_status()
         short = response.text.strip()
-        if short.startswith("http"):
+        if short.startswith("http") and len(short) < len(long_url):
             return short
     except requests.RequestException:
         pass
@@ -129,8 +140,6 @@ def build_message_and_actions(mode):
                 clean = clean_title(story["title"])
                 lines.append(f"- [{clean}]({short_link})")
 
-                # Turn each section's top story into a quick-tap action
-                # button on the notification itself (max 3 total allowed).
                 if story_idx == 0 and len(actions) < 3:
                     button_label = f"{group_name}: {clean_title(story['title'], max_words=5)}"
                     if len(button_label) > MAX_ACTION_LABEL_CHARS:
@@ -144,7 +153,6 @@ def build_message_and_actions(mode):
                         }
                     )
 
-        # Visual divider between sections (not after the last one).
         if idx < len(group_names) - 1:
             lines.append("")
             lines.append("---")
