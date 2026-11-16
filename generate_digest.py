@@ -11,7 +11,7 @@ Required environment variables (set as GitHub Actions secrets):
                     https://savyasachin.github.io/tech-digest_theodoobin/
 
 Optional environment variable:
-  DIGEST_MODE    - "quick" (1 story per section) or "full" (5 per section,
+  DIGEST_MODE    - "quick" (5 stories per section) or "full" (7 per section,
                    default)
 """
 
@@ -41,9 +41,11 @@ FEED_GROUPS = {
     ],
 }
 
+# Both modes now guarantee at least 5 stories per section; "full" just shows
+# a couple more for the evening read.
 MODE_SETTINGS = {
-    "quick": {"max_per_group": 1, "label": "Quick Check"},
-    "full": {"max_per_group": 5, "label": "Full Digest"},
+    "quick": {"max_per_group": 5, "label": "Quick Check"},
+    "full": {"max_per_group": 7, "label": "Full Digest"},
 }
 
 
